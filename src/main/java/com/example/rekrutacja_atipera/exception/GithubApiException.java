@@ -1,4 +1,4 @@
-package com.example.rekrutacja_atipera.model;
+package com.example.rekrutacja_atipera.exception;
 
 import org.springframework.http.HttpStatusCode;
 
