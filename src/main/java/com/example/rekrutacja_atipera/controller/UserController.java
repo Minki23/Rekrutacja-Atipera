@@ -1,5 +1,6 @@
 package com.example.rekrutacja_atipera.controller;
 
+import com.example.rekrutacja_atipera.model.Branch;
 import com.example.rekrutacja_atipera.model.GithubApiException;
 import com.example.rekrutacja_atipera.model.Repository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -7,6 +8,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.catalina.User;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -20,12 +23,16 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 @RestController
 public class UserController {
 
+    @Value("${github.token}")
+    private static String githubToken;
     private static final WebClient webClient = WebClient.builder()
             .baseUrl("https://api.github.com")
+            .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + githubToken)
             .build();
     private final Logger logger = LoggerFactory.getLogger(UserController.class);
     private final ObjectMapper objectMapper;
@@ -43,27 +50,19 @@ public class UserController {
                         response.bodyToMono(String.class)
                                 .flatMap(body -> Mono.error(new GithubApiException(
                                         response.statusCode(),
-                                        "Client error: " + extractMessageFromGithubError(body)
+                                        extractMessageFromGithubError(body)
                                 )))
                 )
-                .bodyToMono(Object.class)
-                .flatMap(body -> {
-                    Object repositories = objectMapper.convertValue(body, Repository[].class);
-                    return Mono.just(ResponseEntity.ok()
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .body(repositories));
-                })
-                .onErrorResume(GithubApiException.class, ex -> {
-                    logger.warn("GitHub API error: {}", ex.getMessage());
-
-                    Map<String, Object> errorResponse = new LinkedHashMap<>();
-                    errorResponse.put("status", ex.getStatus().value());
-                    errorResponse.put("message", ex.getBody());
-
-                    return Mono.just(ResponseEntity.status(ex.getStatus())
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .body(errorResponse));
-                });
+                .bodyToMono(new ParameterizedTypeReference<List<Repository>>() {})
+                .flatMapMany(repos -> Flux.fromIterable(filterForks(repos)))
+                .flatMap(repo ->
+                        addBranches(repo, username).thenReturn(repo)
+                )
+                .collectList()
+                .map(filteredRepos -> ResponseEntity.ok()
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(filteredRepos)
+                );
     }
 
     private String extractMessageFromGithubError(String rawBody) {
@@ -76,7 +75,25 @@ public class UserController {
     }
 
 
-    private Object filterForks(Object repoList) {
-        return repoList;
+    private List<Repository> filterForks(List<Repository> repositories) {
+        return repositories.stream()
+                .filter(repository -> !repository.isFork())
+                .collect(Collectors.toList());
+    }
+
+    public Mono<Void> addBranches(Repository repository, String username) {
+        return webClient.get()
+                .uri("/repos/{username}/{repository}/branches", username, repository.getName())
+                .retrieve()
+                .onStatus(HttpStatusCode::is4xxClientError, response ->
+                        response.bodyToMono(String.class)
+                                .flatMap(body -> Mono.error(new GithubApiException(
+                                        response.statusCode(),
+                                        extractMessageFromGithubError(body)
+                                )))
+                )
+                .bodyToMono(new ParameterizedTypeReference<List<Branch>>() {})
+                .doOnNext(repository::setBranches)
+                .then();
     }
 }
