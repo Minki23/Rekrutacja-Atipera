@@ -1,24 +1,19 @@
 package com.example.rekrutacja_atipera.controller;
 
 import com.example.rekrutacja_atipera.model.Branch;
-import com.example.rekrutacja_atipera.model.GithubApiException;
+import com.example.rekrutacja_atipera.model.dto.BranchDTO;
+import com.example.rekrutacja_atipera.model.dto.RepositoryDTO;
+import com.example.rekrutacja_atipera.exception.GithubApiException;
 import com.example.rekrutacja_atipera.model.Repository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.catalina.User;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.*;
-import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.servlet.View;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -29,15 +24,12 @@ import java.util.stream.Collectors;
 public class UserController {
 
     @Value("${github.token}")
-    private static String githubToken;
-    private static final WebClient webClient = WebClient.builder()
-            .baseUrl("https://api.github.com")
-            .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + githubToken)
-            .build();
-    private final Logger logger = LoggerFactory.getLogger(UserController.class);
+    private String githubToken;
     private final ObjectMapper objectMapper;
+    private final WebClient webClient;
 
-    public UserController(ObjectMapper objectMapper) {
+    public UserController(ObjectMapper objectMapper, WebClient webClient) {
+        this.webClient = webClient;
         this.objectMapper = objectMapper;
     }
 
@@ -59,10 +51,21 @@ public class UserController {
                         addBranches(repo, username).thenReturn(repo)
                 )
                 .collectList()
-                .map(filteredRepos -> ResponseEntity.ok()
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .body(filteredRepos)
-                );
+                .map(filteredRepos -> {
+                    List<RepositoryDTO> responseList = filteredRepos.stream()
+                            .map(repo -> new RepositoryDTO(
+                                    repo.getName(),
+                                    repo.getOwner().getLogin(),
+                                    repo.getBranches().stream()
+                                            .map(branch -> new BranchDTO(branch.getName(), branch.getCommit().getSHA()))
+                                            .collect(Collectors.toList())
+                            ))
+                            .collect(Collectors.toList());
+
+                    return ResponseEntity.ok()
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(responseList);
+                });
     }
 
     private String extractMessageFromGithubError(String rawBody) {
