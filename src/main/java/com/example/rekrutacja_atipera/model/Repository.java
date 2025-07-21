@@ -5,8 +5,17 @@ import java.util.List;
 
 public class Repository {
     private String name;
+    private Owner owner;
     private boolean fork;
     private List<Branch> branches = new ArrayList<>();
+
+    public Owner getOwner() {
+        return owner;
+    }
+
+    public void setOwner(Owner owner) {
+        this.owner = owner;
+    }
 
     public void setBranches(List<Branch> branches) {
         this.branches = branches;
